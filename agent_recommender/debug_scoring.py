@@ -1,9 +1,3 @@
-# Run with:  python debug_scoring.py
-# (from the project root or anywhere on PYTHONPATH where agent_recommender is importable)
-
-from pprint import pprint
-
-# Import your real functions
 from agent_recommender.scoring import base_score, naive_keyword_match, blend_score
 
 CASES = [
@@ -18,7 +12,7 @@ CASES = [
     ("Edge: difficulty high", 4.2, 88, 9.0),
     ("Edge: difficulty low", 4.2, 88, 0.0),
     ("Weird: mixed types", "4", 88.0, "3.0"),
-    ("Weird: bad strings", "4.6x", "88%", "easy"),   # expect coercion to defaults
+    ("Weird: bad strings", "4.6x", "88%", "easy"),
     ("Weird: None", None, None, None),
 ]
 

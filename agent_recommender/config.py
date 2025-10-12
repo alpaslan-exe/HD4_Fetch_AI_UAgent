@@ -1,28 +1,21 @@
+from __future__ import annotations
 import os
 
-def _f(name: str, default: str) -> float:
-    try:
-        return float(os.getenv(name, default))
-    except Exception:
-        return float(default)
+# API server port for FastAPI
+API_HOST = os.getenv("API_HOST", "0.0.0.0")
+API_PORT = int(os.getenv("API_PORT", "5057"))
 
-# Ensure all are floats at module load time
-ALPHA = _f("RECO_ALPHA", "0.65")
-W_RATING = _f("RECO_W_RATING", "0.55")
-W_TAKE_AGAIN = _f("RECO_W_TAKE_AGAIN", "0.35")
-W_DIFFICULTY = _f("RECO_W_DIFFICULTY", "0.20")
+# uAgents (Bureau) host/port used by the query client
+QUERY_SERVER = os.getenv("QUERY_SERVER", "http://127.0.0.1:8000")
 
-MAX_EVALS = int(os.getenv("RECO_MAX_EVALS", "5"))
+# Protocol names (must match agent)
+PROTOCOL_NAME_V1 = "professor_recommender_protocol"
+PROTOCOL_NAME_V2 = "professor_recommender_protocol_v2"
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "none")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
-LLM_TEMPERATURE = _f("LLM_TEMPERATURE", "0.1")
-LLM_TIMEOUT = _f("LLM_TIMEOUT", "10")
+# Scoring constants (for direct / debug endpoints; agent v2 uses LLM)
+RECO_ALPHA = float(os.getenv("RECO_ALPHA", "0.65"))
+MAX_EVALS = int(os.getenv("MAX_EVALS", "5"))
 
-# Ensure these are floats too
-MIN_RATING = 0.0
-MAX_RATING = 5.0
-MIN_TAKE_AGAIN = 0.0
-MAX_TAKE_AGAIN = 100.0
-MIN_DIFFICULTY = 1.0
-MAX_DIFFICULTY = 5.0
+# Optional public endpoint (for Agentverse/ASI)
+PUBLIC_ENDPOINT = os.getenv("PUBLIC_ENDPOINT")  # e.g. "https://your-domain/submit"
+PUBLISH_MANIFEST = os.getenv("PUBLISH_MANIFEST", "false").lower() in {"1","true","yes"}
