@@ -12,7 +12,9 @@ async def startup(ctx: Context):
     ctx.logger.info(f"Agent is running at address: {agent.address}")
 
 
-@protocol.on_message(model=RecommendRequestMsg, replies=RecommendResponseMsg)
+@protocol.on_message(model=RecommendRequestMsg,
+                     replies=RecommendResponseMsg,
+                     allow_unverified=True)
 async def handle_request(ctx: Context, sender: str, msg: RecommendRequestMsg):
     try:
         ctx.logger.info(f"Received recommendation request from {sender}")
