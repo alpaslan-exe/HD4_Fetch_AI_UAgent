@@ -1,24 +1,36 @@
-"""
-Configuration file for Fetch.AI UAgent
-"""
+import os
+from typing import Optional
 
-# Agent Configuration
-AGENT_NAME = "my_agent"
-AGENT_PORT = 8000
-AGENT_SEED = "my_agent_seed_phrase"  # Change this for production
-AGENT_ENDPOINT = "http://localhost:8000/submit"
+class Config:
+    """Configuration class for the AI Agent Backend"""
+    
+    # Database configuration
+    DB_NAME: str = os.getenv("DB_NAME", "ai_agents_db")
+    DB_USER: str = os.getenv("DB_USER", "postgres")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "password")
+    DB_HOST: str = os.getenv("DB_HOST", "localhost")
+    DB_PORT: str = os.getenv("DB_PORT", "5432")
+    
+    # JWT Configuration
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-this")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+    
+    # UAgent Configuration
+    BACKEND_AGENT_SEED: str = os.getenv("BACKEND_AGENT_SEED", "backend agent secret phrase")
+    
+    # Application settings
+    APP_NAME: str = os.getenv("APP_NAME", "AI Agent Backend")
+    DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
+    API_V1_STR: str = "/api/v1"
+    
+    # CORS settings
+    BACKEND_CORS_ORIGINS: list = []
+    
+    # Database URL construction
+    @property
+    def DATABASE_URL(self) -> str:
+        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
-# Network Configuration
-# Options: "mainnet", "testnet", "local"
-NETWORK = "local"
-
-# Logging Configuration
-LOG_LEVEL = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
-
-# Mailbox Configuration (for persistent agent communication)
-MAILBOX_ENABLED = False
-MAILBOX_SERVER_URL = "https://agentverse.ai"
-MAILBOX_API_KEY = ""  # Add your Agentverse API key here
-
-# Protocol Configuration
-PROTOCOL_DIGEST = ""  # Add protocol digest if using specific protocols
+# Create a config instance
+config = Config()
