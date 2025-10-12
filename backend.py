@@ -1,7 +1,9 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from PyPDF2 import PdfReader
+from io import BytesIO
+from typing import Optional, List
 from datetime import datetime
 import hashlib
 import jwt
@@ -13,11 +15,90 @@ from psycopg2.extras import RealDictCursor
 import re
 from config import config
 
+# PDF bite-file to text converter
+def convertBiteFileToText(file_bytes: bytes) -> str:
+    reader = PdfReader(BytesIO(file_bytes))
+    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    return text
+
+# Course code extractor
+def extractCourseCodesFromPDF(text: str) -> List[str]:
+    text = re.sub(r"([A-Z]{2,6})\s?(\d{3,4}[A-Z]?)\s*/\s*([A-Z]{2,6})\s?(\d{3,4}[A-Z]?)",
+                  r"\1 \2, \3 \4", text)
+    text = re.sub(r"([A-Z]{2,6})\s+(\d{3,4}[A-Z]?)\s*&\s*(\d{3,4}[A-Z]?)",
+                  r"\1 \2, \1 \3", text)
+    text = re.sub(r"\s+", " ", text)
+
+    pattern = re.compile(r"\b([A-Z]{2,6})\s?(\d{3,4}[A-Z]?)\b")
+    courses = {f"{d} {n}" for d, n in pattern.findall(text)}
+
+    def sort_key(code):
+        dept, num = code.split()
+        m = re.match(r"(\d+)", num)
+        return (dept, int(m.group(1)) if m else 0, num)
+
+    return sorted(courses, key=sort_key)
+
+# Department mapping
+def mapCourseDepartment(courseCodesList: List[str]) -> tuple:
+
+    departments = ['Computer Science', 'Engineering', 'Mathematics',
+                   'English', 'Economics', 'Statistics', 'Chemistry',
+                   'Biology', 'Science', 'Physics', 'Geology',
+                   'Health & Human Services']
+
+    courses = courseCodesList['courses']
+
+    fullDepartmentNames = []
+    courseAcronyms = []
+    courseNumbers = []
+
+    for course in courses:
+        courseSplit = course.split(' ')
+
+        acronym = courseSplit[0]
+
+        match acronym:
+            case 'CIS' | 'CCM':
+                fullName = departments[0] + ' department'
+            case 'ECE' | 'ENGR':
+                fullName = departments[1] + ' department'
+            case 'MATH':
+                fullName = departments[2] + ' department'
+            case 'COMP':
+                fullName = departments[3] + ' department'
+            case 'ECON':
+                fullName = departments[4] + ' department'
+            case 'STAT':
+                fullName = departments[5] + ' department'
+            case 'CHEM':
+                fullName = departments[6] + ' department'
+            case 'BIOL':
+                fullName = departments[7] + ' department'
+            case 'ASTR':
+                fullName = departments[8] + ' department'
+            case 'PHYS':
+                fullName = departments[9] + ' department'
+            case 'GEOL':
+                fullName = departments[10] + ' department'
+            case 'HHS':
+                fullName = departments[11] + ' department'
+            case _:
+                fullName = 'Unknown department'
+
+        fullDepartmentNames.append(fullName)
+        courseAcronyms.append(acronym)
+        courseNumbers.append(courseSplit[1])
+
+    return fullDepartmentNames, courseAcronyms, courseNumbers
+
 # Initialize FastAPI app
-app = FastAPI(title="AI Agent Backend", description="Backend service for AI agents with user management", version="1.0.0")
+app = FastAPI(title="AI Agent Backend", description="Backend service for AI agents with user management",
+              version="1.0.0")
 
 # Security scheme for authentication
 security = HTTPBearer()
+
 
 # Pydantic models for request/response
 class UserSignupRequest(BaseModel):
@@ -25,9 +106,11 @@ class UserSignupRequest(BaseModel):
     email: EmailStr
     password: str
 
+
 class UserLoginRequest(BaseModel):
     username: str
     password: str
+
 
 class UserResponse(BaseModel):
     id: int
@@ -35,9 +118,11 @@ class UserResponse(BaseModel):
     email: str
     created_at: datetime
 
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str
+
 
 # Database connection
 class Database:
@@ -49,27 +134,32 @@ class Database:
             "host": config.DB_HOST,
             "port": config.DB_PORT,
         }
-    
+
     def get_connection(self):
         return psycopg2.connect(**self.connection_params)
 
+
 # Initialize database
 db = Database()
+
 
 # Helper functions
 def hash_password(password: str) -> str:
     """Hash a password using SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against its hash"""
     return hash_password(plain_password) == hashed_password
+
 
 def create_access_token(data: dict) -> str:
     """Create a JWT access token"""
     SECRET_KEY = config.JWT_SECRET_KEY
     ALGORITHM = config.JWT_ALGORITHM
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
 
 def verify_token(token: str) -> dict:
     """Verify and decode a JWT token"""
@@ -91,18 +181,20 @@ def verify_token(token: str) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     """Dependency to get current user from token"""
     token = credentials.credentials
     user_data = verify_token(token)
     return user_data
 
+
 # Database setup - Create tables if they don't exist
 def setup_database():
     try:
         conn = db.get_connection()
         cursor = conn.cursor()
-        
+
         # Create users table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -114,7 +206,7 @@ def setup_database():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        
+
         # Create agents table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS agents (
@@ -126,7 +218,7 @@ def setup_database():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        
+
         # Create agent logs table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS agent_logs (
@@ -137,7 +229,7 @@ def setup_database():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        
+
         conn.commit()
         cursor.close()
         conn.close()
@@ -148,10 +240,12 @@ def setup_database():
         print("You can create the database using: python init_db.py")
         return False
 
+
 # Initialize database tables (only if DB is available)
 db_setup_success = setup_database()
 if not db_setup_success:
     print("⚠️  Database not available. Some features may not work until database is set up and running.")
+
 
 # User signup endpoint
 @app.post("/signup", response_model=UserResponse, status_code=201)
@@ -159,12 +253,12 @@ async def signup(user_data: UserSignupRequest):
     """Create a new user account"""
     conn = db.get_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    
+
     # Check if user already exists
-    cursor.execute("SELECT id FROM users WHERE username = %s OR email = %s", 
+    cursor.execute("SELECT id FROM users WHERE username = %s OR email = %s",
                    (user_data.username, user_data.email))
     existing_user = cursor.fetchone()
-    
+
     if existing_user:
         cursor.close()
         conn.close()
@@ -172,24 +266,25 @@ async def signup(user_data: UserSignupRequest):
             status_code=status.HTTP_409_CONFLICT,
             detail="Username or email already registered"
         )
-    
+
     # Hash the password
     password_hash = hash_password(user_data.password)
-    
+
     # Insert the new user
     cursor.execute("""
         INSERT INTO users (username, email, password_hash)
         VALUES (%s, %s, %s)
         RETURNING id, username, email, created_at
     """, (user_data.username, user_data.email, password_hash))
-    
+
     new_user = cursor.fetchone()
     conn.commit()
-    
+
     cursor.close()
     conn.close()
-    
+
     return new_user
+
 
 # User login endpoint
 @app.post("/login", response_model=TokenResponse)
@@ -197,26 +292,27 @@ async def login(user_data: UserLoginRequest):
     """Authenticate user and return access token"""
     conn = db.get_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    
+
     # Find user by username
-    cursor.execute("SELECT id, username, email, password_hash FROM users WHERE username = %s", 
+    cursor.execute("SELECT id, username, email, password_hash FROM users WHERE username = %s",
                    (user_data.username,))
     user = cursor.fetchone()
-    
+
     cursor.close()
     conn.close()
-    
+
     if not user or not verify_password(user_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Create access token
     access_token = create_access_token(data={"user_id": user['id'], "username": user['username']})
-    
+
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 # Get current user info
 @app.get("/users/me", response_model=UserResponse)
@@ -224,18 +320,19 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
     """Get current user's information"""
     conn = db.get_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    
-    cursor.execute("SELECT id, username, email, created_at FROM users WHERE id = %s", 
+
+    cursor.execute("SELECT id, username, email, created_at FROM users WHERE id = %s",
                    (current_user['user_id'],))
     user = cursor.fetchone()
-    
+
     cursor.close()
     conn.close()
-    
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     return user
+
 
 # UAgent example
 # Create an example agent that can be managed by users
@@ -248,46 +345,49 @@ agent = Agent(
 
 fund_agent_if_low(agent.wallet.address())
 
+
 class AgentMessage(Model):
     content: str
     user_id: int
+
 
 @agent.on_message(model=AgentMessage)
 async def handle_agent_message(ctx: Context, sender: str, msg: AgentMessage):
     """Handle messages sent to the agent"""
     ctx.logger.info(f"Received message from {sender}: {msg.content}")
-    
+
     # You can add custom logic here to process the message
     # For example, store it in the database or trigger other actions
     conn = db.get_connection()
     cursor = conn.cursor()
-    
+
     # Log the agent interaction
     cursor.execute("""
         INSERT INTO agent_logs (agent_id, log_level, message)
         VALUES (%s, %s, %s)
     """, (1, 'INFO', f"Message from user {msg.user_id}: {msg.content}"))
-    
+
     conn.commit()
     cursor.close()
     conn.close()
+
 
 @app.get("/agents/{agent_id}/logs")
 async def get_agent_logs(agent_id: int, current_user: dict = Depends(get_current_user)):
     """Get logs for a specific agent"""
     conn = db.get_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    
+
     # Verify that the agent belongs to the current user
-    cursor.execute("SELECT id FROM agents WHERE id = %s AND user_id = %s", 
+    cursor.execute("SELECT id FROM agents WHERE id = %s AND user_id = %s",
                    (agent_id, current_user['user_id']))
     agent = cursor.fetchone()
-    
+
     if not agent:
         cursor.close()
         conn.close()
         raise HTTPException(status_code=404, detail="Agent not found or access denied")
-    
+
     # Get logs for the agent
     cursor.execute("""
         SELECT id, log_level, message, timestamp 
@@ -295,13 +395,14 @@ async def get_agent_logs(agent_id: int, current_user: dict = Depends(get_current
         WHERE agent_id = %s 
         ORDER BY timestamp DESC
     """, (agent_id,))
-    
+
     logs = cursor.fetchall()
-    
+
     cursor.close()
     conn.close()
-    
+
     return logs
+
 
 # Health check endpoint
 @app.get("/health")
@@ -309,6 +410,23 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now()}
 
+
+@app.post("/extract-courses")
+async def extractCourses(file: UploadFile = File(...)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    contents = await file.read()
+    try:
+        text = convertBiteFileToText(file_bytes=contents)
+        extractedCourseCodes = extractCourseCodesFromPDF(text=text)
+        fullDepartmentNames, departmentAcronyms, courseNumbers = mapCourseDepartment(courseCodesList=extractedCourseCodes)
+        return fullDepartmentNames, departmentAcronyms, courseNumbers
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF parsing failed: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
