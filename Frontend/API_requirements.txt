@@ -1,0 +1,306 @@
+HD4 Scheduler API Requirements
+==============================
+
+Authentication
+--------------
+
+### POST `/api/auth/login`
+Request JSON:
+```json
+{
+  "email": "student@example.edu",
+  "password": "supplied-password"
+}
+```
+ALSO CREATE A PASSWORD RESET FLOW FOR PRODUCTION.
+
+
+Response JSON (200):
+```json
+{
+  "accessToken": "jwt-token",
+  "refreshToken": "refresh-token",
+  "user": {
+    "id": "uuid",
+    "email": "student@example.edu",
+    "displayName": "Student User",
+    "role": "student"
+  }
+}
+```
+
+### POST `/api/auth/refresh`
+Request JSON:
+```json
+{
+  "refreshToken": "refresh-token"
+}
+```
+Response JSON mirrors `/api/auth/login`.
+
+### POST `/api/auth/logout`
+Request JSON:
+```json
+{
+  "refreshToken": "refresh-token"
+}
+```
+Response JSON (204 No Content preferred; otherwise `{ "success": true }`).
+
+User Profile
+------------
+
+### GET `/api/users/me`
+Headers: `Authorization: Bearer <accessToken>`
+Response JSON:
+```json
+{
+  "id": "uuid",
+  "email": "student@example.edu",
+  "displayName": "Student User",
+  "createdAt": "2025-01-20T15:00:00.000Z",
+  "updatedAt": "2025-01-28T21:45:12.000Z"
+}
+```
+
+### PATCH `/api/users/me`
+Request JSON:
+```json
+{
+  "displayName": "New Display Name",
+  "password": {
+    "current": "current-pass",
+    "next": "new-pass"
+  }
+}
+```
+All fields optional; omit `password` when not changing it.
+Response JSON mirrors `GET /api/users/me`.
+
+Semesters & Planning
+--------------------
+
+### GET `/api/semesters`
+Query params: `?year=2025&includeClasses=true`
+Response JSON:
+```json
+{
+  "semesters": [
+    {
+      "id": "2025-fall",
+      "name": "Fall",
+      "year": 2025,
+      "position": 1,
+      "classes": [
+        {
+          "id": "uuid",
+          "name": "CS 320 - Algorithms",
+          "credits": 3,
+          "professor": "Dr. Patel",
+          "rateMyProfessorUrl": "https://www.ratemyprofessors.com/...",
+          "notes": "Meets T/Th 10am"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### POST `/api/semesters`
+Request JSON:
+```json
+{
+  "name": "Spring",
+  "year": 2026,
+  "position": 2
+}
+```
+Response JSON: newly created semester object.
+
+### PATCH `/api/semesters/:semesterId`
+Request JSON:
+```json
+{
+  "name": "Spring",
+  "year": 2026,
+  "position": 2
+}
+```
+Response JSON mirrors semester object.
+
+### DELETE `/api/semesters/:semesterId`
+Response: 204 No Content.
+
+Classes within Semesters
+------------------------
+
+### POST `/api/semesters/:semesterId/classes`
+Request JSON:
+```json
+{
+  "name": "CS 320 - Algorithms",
+  "credits": 3,
+  "professor": "Dr. Patel",
+  "rateMyProfessorUrl": "https://www.ratemyprofessors.com/...",
+  "notes": "Meets T/Th 10am"
+}
+```
+Response JSON: created class object (with `id`, timestamps).
+
+### PATCH `/api/semesters/:semesterId/classes/:classId`
+Request JSON mirrors POST with partial updates allowed.
+
+### DELETE `/api/semesters/:semesterId/classes/:classId`
+Response: 204 No Content.
+
+Professor Directory
+-------------------
+
+Derivable from semesters/classes, but optional dedicated endpoint:
+
+### GET `/api/professors`
+Response JSON:
+```json
+{
+  "professors": [
+    {
+      "id": "uuid",
+      "name": "Dr. Patel",
+      "rateMyProfessorUrl": "https://www.ratemyprofessors.com/...",
+      "courses": [
+        {
+          "classId": "uuid",
+          "semesterId": "2025-fall",
+          "name": "CS 320 - Algorithms",
+          "year": 2025,
+          "term": "Fall"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Historical Coursework
+---------------------
+
+### GET `/api/previous-classes`
+Response JSON:
+```json
+{
+  "courses": [
+    {
+      "id": "uuid",
+      "name": "ENG 210 - Technical Writing",
+      "semester": "Spring 2024",
+      "grade": "A-",
+      "professor": "Dr. Castillo"
+    }
+  ]
+}
+```
+
+### POST `/api/previous-classes`
+Request JSON:
+```json
+{
+  "name": "ENG 210 - Technical Writing",
+  "semester": "Spring 2024",
+  "grade": "A-",
+  "professor": "Dr. Castillo"
+}
+```
+Response JSON: created course object.
+
+### PATCH `/api/previous-classes/:courseId`
+Request JSON allows partial updates of the same fields.
+
+### DELETE `/api/previous-classes/:courseId`
+Response: 204 No Content.
+
+Schedule & Document Uploads
+---------------------------
+
+Use multipart form data for binary uploads; respond with metadata references.
+
+### POST `/api/uploads/pathway-plan`
+`Content-Type: multipart/form-data`
+Fields: `file` (binary), optional `notes`.
+Response JSON:
+```json
+{
+  "id": "uuid",
+  "type": "pathway-plan",
+  "originalName": "pathway_plan.pdf",
+  "contentType": "application/pdf",
+  "size": 128000,
+  "uploadedAt": "2025-01-29T13:00:00.000Z",
+  "url": "https://cdn.hd4scheduler.com/uploads/uuid"
+}
+```
+
+### POST `/api/uploads/previous-classes`
+Same structure as pathway plan; `type` becomes `"previous-classes"`.
+
+### POST `/api/uploads/current-semester`
+Same structure; `type` becomes `"current-semester"`.
+
+### GET `/api/uploads`
+Query params: `?type=pathway-plan`
+Response JSON:
+```json
+{
+  "uploads": [
+    {
+      "id": "uuid",
+      "type": "pathway-plan",
+      "originalName": "pathway_plan.pdf",
+      "contentType": "application/pdf",
+      "size": 128000,
+      "uploadedAt": "2025-01-29T13:00:00.000Z",
+      "url": "https://cdn.hd4scheduler.com/uploads/uuid"
+    }
+  ]
+}
+```
+
+### DELETE `/api/uploads/:uploadId`
+Response: 204 No Content.
+
+System Preferences & Metadata
+-----------------------------
+
+### GET `/api/meta/semester-sequence`
+Response JSON:
+```json
+{
+  "availableTerms": ["Spring", "Summer", "Fall", "Winter"],
+  "defaultStartYear": 2025
+}
+```
+
+### GET `/api/meta/grade-scale`
+Response JSON:
+```json
+{
+  "grades": ["A", "A-", "B+", "B", "B-", "C+", "C", "Pass", "Fail"]
+}
+```
+
+Error Format
+------------
+
+Errors return JSON:
+```json
+{
+  "error": {
+    "code": "SEMESTER_NOT_FOUND",
+    "message": "Semester 2025-fall was not found.",
+    "details": {
+      "semesterId": "2025-fall"
+    }
+  }
+}
+```
+
+Authentication errors use HTTP 401/403, validation errors 422, not found 404, and server issues 500.
