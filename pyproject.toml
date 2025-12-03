@@ -9,15 +9,15 @@ dependencies = [
     "uagents>=0.22.10",
     "pydantic[email]>=2.5.0",
     "psycopg2-binary>=2.9.9",
-    "PyJWT>=2.8.0",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.23",
     "alembic>=1.13.1",
     "uvicorn>=0.24.0",
-    "jwt>=1.4.0",
     "httpx>=0.28.1",
+    "aiohttp>=3.9.0",
     "pypdf2>=3.0.1",
     "python-multipart>=0.0.20",
+    "pyjwt>=2.10.1",
 ]
 
 [build-system]

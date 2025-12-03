@@ -6,8 +6,8 @@ class Config:
     
     # Database configuration
     DB_NAME: str = os.getenv("DB_NAME", "ai_agents_db")
-    DB_USER: str = os.getenv("DB_USER", "postgres")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "password")
+    DB_USER: str = os.getenv("DB_USER", "chronosadmin")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "Chronos@69420")
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
     DB_PORT: str = os.getenv("DB_PORT", "5432")
     

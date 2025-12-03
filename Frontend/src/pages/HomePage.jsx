@@ -10,6 +10,7 @@ import {
   CardContent,
   CardHeader,
   Chip,
+  CircularProgress,
   Collapse,
   Dialog,
   DialogActions,
@@ -20,6 +21,7 @@ import {
   Fade,
   Fab,
   FormControl,
+  IconButton,
   InputLabel,
   List,
   ListItem,
@@ -50,7 +52,11 @@ import PeopleAltRoundedIcon from '@mui/icons-material/PeopleAltRounded'
 import PersonAddRoundedIcon from '@mui/icons-material/PersonAddRounded'
 import MarkEmailUnreadRoundedIcon from '@mui/icons-material/MarkEmailUnreadRounded'
 import EventAvailableRoundedIcon from '@mui/icons-material/EventAvailableRounded'
+import DeleteRoundedIcon from '@mui/icons-material/DeleteRounded'
 import InteractivePanel from '../components/InteractivePanel.jsx'
+import ProfessorDetails from '../components/ProfessorDetails.jsx'
+import ProfessorSelector from '../components/ProfessorSelector.jsx'
+import ApiService from '../services/api'
 
 const drawerWidth = 272
 const semesterSequence = ['Spring', 'Summer', 'Fall', 'Winter']
@@ -108,7 +114,7 @@ const generateSemesters = (startYear, firstSemester, count) => {
   return semesters
 }
 
-const HomePage = ({ onLogout, userEmail }) => {
+const HomePage = ({ onLogout, user }) => {
   const [activeSection, setActiveSection] = useState('overview')
   const [startYear, setStartYear] = useState(new Date().getFullYear())
   const [firstSemester, setFirstSemester] = useState('Fall')
@@ -116,13 +122,15 @@ const HomePage = ({ onLogout, userEmail }) => {
   const [semesters, setSemesters] = useState(() =>
     generateSemesters(new Date().getFullYear(), 'Fall', 4).map((semester) => ({
       ...semester,
+      backendId: null,
       classes: [],
     })),
   )
   const [showSignOut, setShowSignOut] = useState(false)
+  const userEmail = user?.email || ''
   const defaultName = useMemo(
-    () => (userEmail ? userEmail.split('@')[0] : 'Student User'),
-    [userEmail],
+    () => user?.displayName || (userEmail ? userEmail.split('@')[0] : 'Student User'),
+    [user, userEmail],
   )
   const [profileName, setProfileName] = useState(defaultName)
   const [profilePassword, setProfilePassword] = useState('demo-pass')
@@ -131,6 +139,16 @@ const HomePage = ({ onLogout, userEmail }) => {
     pathway: null,
     previous: null,
     current: null,
+  })
+  const [existingUploads, setExistingUploads] = useState({
+    'pathway-plan': [],
+    'previous-classes': [],
+    'current-semester': [],
+  })
+  const [uploadStatus, setUploadStatus] = useState({
+    pathway: { loading: false, error: null },
+    previous: { loading: false, error: null },
+    current: { loading: false, error: null },
   })
   const [previousClasses, setPreviousClasses] = useState([
     {
@@ -186,6 +204,7 @@ const HomePage = ({ onLogout, userEmail }) => {
 
   const [isTimelineDialogOpen, setIsTimelineDialogOpen] = useState(false)
   const [isAddClassDialogOpen, setIsAddClassDialogOpen] = useState(false)
+  const [isProfessorSelectorOpen, setIsProfessorSelectorOpen] = useState(false)
   const [newClassForm, setNewClassForm] = useState({
     semesterId: '',
     name: '',
@@ -193,6 +212,16 @@ const HomePage = ({ onLogout, userEmail }) => {
     professor: '',
     rmp: '',
   })
+  
+  // Schedule generation state
+  const [activeGenerationSemesterId, setActiveGenerationSemesterId] = useState(null)
+  const [loadingGenerationSemesterId, setLoadingGenerationSemesterId] = useState(null)
+  const [semesterPendingProfessorSelection, setSemesterPendingProfessorSelection] = useState(null)
+  const [generatedSemesters, setGeneratedSemesters] = useState(new Set())
+  const [generatedCourses, setGeneratedCourses] = useState([])
+  const [isProfessorChoiceDialogOpen, setIsProfessorChoiceDialogOpen] = useState(false)
+  const [currentCourseForProfessor, setCurrentCourseForProfessor] = useState(null)
+  const [agentRecommendations, setAgentRecommendations] = useState({})
   const [isAddPreviousClassOpen, setIsAddPreviousClassOpen] = useState(false)
   const [previousClassForm, setPreviousClassForm] = useState({
     course: '',
@@ -227,7 +256,7 @@ const HomePage = ({ onLogout, userEmail }) => {
         const existing = prev.find((item) => item.id === semester.id)
         return existing
           ? existing
-          : { ...semester, classes: [] }
+          : { ...semester, backendId: null, classes: [] }
       })
     })
   }, [startYear, firstSemester, semesterCount])
@@ -255,6 +284,51 @@ const HomePage = ({ onLogout, userEmail }) => {
       }
     })
   }, [semesters])
+
+  useEffect(() => {
+    const eligibleSemesters = semesters
+      .filter((semester) => semester.classes.length === 0 && !generatedSemesters.has(semester.id))
+      .map((semester) => semester.id)
+
+    if (eligibleSemesters.length === 0) {
+      if (activeGenerationSemesterId !== null) {
+        setActiveGenerationSemesterId(null)
+      }
+      return
+    }
+
+    const desiredActiveId = eligibleSemesters.includes(activeGenerationSemesterId)
+      ? activeGenerationSemesterId
+      : eligibleSemesters[0]
+
+    if (desiredActiveId !== activeGenerationSemesterId) {
+      setActiveGenerationSemesterId(desiredActiveId)
+    }
+  }, [semesters, generatedSemesters, activeGenerationSemesterId])
+
+  // Load existing uploads on mount
+  useEffect(() => {
+    const loadUploads = async () => {
+      try {
+        const types = ['pathway-plan', 'previous-classes', 'current-semester']
+        for (const type of types) {
+          const response = await ApiService.getUploads(type)
+          setExistingUploads((prev) => ({
+            ...prev,
+            [type]: response.uploads || [],
+          }))
+        }
+      } catch (error) {
+        console.error('Error loading uploads:', error)
+      }
+    }
+    loadUploads()
+  }, [])
+
+  // Load semesters from database on mount
+  useEffect(() => {
+    loadSemestersFromDatabase()
+  }, [])
   useEffect(() => {
     if (friends.length === 0) {
       setSelectedFriendId(null)
@@ -266,17 +340,37 @@ const HomePage = ({ onLogout, userEmail }) => {
     }
   }, [friends, selectedFriendId])
 
-  const handleRemoveClass = (semesterId, index) => {
-    setSemesters((prev) =>
-      prev.map((semester) =>
-        semester.id === semesterId
-          ? {
-              ...semester,
-              classes: semester.classes.filter((_, classIndex) => classIndex !== index),
-            }
-          : semester,
-      ),
-    )
+  const handleRemoveClass = async (semesterId, classId) => {
+    try {
+      // If classId is a database ID (number), delete from database
+      if (typeof classId === 'number' || (typeof classId === 'string' && !classId.includes('-'))) {
+        // Get semester ID from database
+        const [year, semesterName] = semesterId.split('-')
+        const existingSemesters = await ApiService.getSemesters(parseInt(year))
+        const semesterInDb = existingSemesters.semesters?.find(
+          s => s.year === parseInt(year) && s.name === semesterName
+        )
+        
+        if (semesterInDb) {
+          await ApiService.deleteClass(semesterInDb.id, classId)
+        }
+      }
+      
+      // Update local state
+      setSemesters((prev) =>
+        prev.map((semester) =>
+          semester.id === semesterId
+            ? {
+                ...semester,
+                classes: semester.classes.filter((cls) => cls.id !== classId),
+              }
+            : semester,
+        ),
+      )
+    } catch (error) {
+      console.error('Error removing class:', error)
+      alert('Failed to remove class. Please try again.')
+    }
   }
 
   const handleOpenAddClassDialog = () => {
@@ -291,42 +385,553 @@ const HomePage = ({ onLogout, userEmail }) => {
     setIsAddClassDialogOpen(true)
   }
 
-  const handleAddClass = () => {
+  const handleAddClass = async () => {
     if (!newClassForm.name.trim() || !newClassForm.semesterId) return
 
-    const creditsValue = newClassForm.credits ? Number(newClassForm.credits) : null
+    try {
+      const { backendId } = await ensureSemesterInDatabase(newClassForm.semesterId)
+
+      if (!backendId) {
+        throw new Error('Unable to determine semester identifier for class creation')
+      }
+
+      const creditsValue = newClassForm.credits ? Number(newClassForm.credits) : 3
+      
+      // Save class to database
+      const classData = {
+        name: newClassForm.name.trim(),
+        credits: Number.isNaN(creditsValue) ? 3 : creditsValue,
+        professor: newClassForm.professor.trim() || '',
+        rateMyProfessorUrl: newClassForm.rmp.trim() || '',
+        rmpLink: newClassForm.rmp.trim() || ''
+      }
+      
+      await ApiService.createClass(backendId, classData)
+      
+      // Reload semesters from database to get the updated data
+      await loadSemestersFromDatabase()
+      
+      setIsAddClassDialogOpen(false)
+      // Reset form after adding
+      setNewClassForm({
+        semesterId: semesters.length > 0 ? semesters[0].id : '',
+        name: '',
+        credits: '',
+        professor: '',
+        rmp: '',
+      })
+    } catch (error) {
+      console.error('Error adding class:', error)
+      alert('Failed to add class. Please try again.')
+    }
+  }
+
+  const handleAddProfessorFromClassForm = (professorData) => {
+    // Update the form with the selected professor
+    setNewClassForm(prev => ({
+      ...prev,
+      professor: professorData.professor,
+      rmp: professorData.rmp,
+    }))
+  }
+
+  const handleAddProfessorToSchedule = (professorData) => {
+    // Add the class with the selected professor to the schedule
+    const creditsValue = 3; // Default credits, could be configurable
     setSemesters((prev) =>
       prev.map((semester) =>
-        semester.id === newClassForm.semesterId
+        semester.id === professorData.semesterId
           ? {
               ...semester,
               classes: [
                 ...semester.classes,
                 {
-                  name: newClassForm.name.trim(),
-                  credits: Number.isNaN(creditsValue) ? null : creditsValue,
-                  professor: newClassForm.professor.trim(),
-                  rmp: newClassForm.rmp.trim(),
+                  name: professorData.name,
+                  credits: creditsValue,
+                  professor: professorData.professor,
+                  rmp: professorData.rmp,
                 },
               ],
             }
           : semester,
       ),
     )
-    setIsAddClassDialogOpen(false)
   }
 
-  const handleScheduleUpload = (key, file) => {
+  const handleScheduleUpload = async (key, file) => {
     if (!file) return
-    setUploadedFiles((prev) => ({
+    
+    // Map UI key to API type
+    const typeMapping = {
+      pathway: 'pathway-plan',
+      previous: 'previous-classes',
+      current: 'current-semester',
+    }
+    const uploadType = typeMapping[key]
+    
+    setUploadStatus((prev) => ({
       ...prev,
-      [key]: file,
+      [key]: { loading: true, error: null },
     }))
+    
+    try {
+      await ApiService.uploadFile(file, uploadType)
+      setUploadedFiles((prev) => ({
+        ...prev,
+        [key]: file,
+      }))
+      
+      // Reload uploads for this type
+      const response = await ApiService.getUploads(uploadType)
+      setExistingUploads((prev) => ({
+        ...prev,
+        [uploadType]: response.uploads || [],
+      }))
+      
+      setUploadStatus((prev) => ({
+        ...prev,
+        [key]: { loading: false, error: null },
+      }))
+    } catch (error) {
+      console.error('Upload error:', error)
+      setUploadStatus((prev) => ({
+        ...prev,
+        [key]: { loading: false, error: error.message },
+      }))
+    }
   }
 
-  const handleSettingsSubmit = (event) => {
+  const handleDeleteUpload = async (uploadId, type) => {
+    try {
+      await ApiService.deleteUpload(uploadId)
+      
+      // Reload uploads for this type
+      const response = await ApiService.getUploads(type)
+      setExistingUploads((prev) => ({
+        ...prev,
+        [type]: response.uploads || [],
+      }))
+    } catch (error) {
+      console.error('Delete error:', error)
+    }
+  }
+
+  const handleSettingsSubmit = async (event) => {
     event.preventDefault()
-    setSettingsSaved(true)
+    
+    try {
+      // Update user profile on backend
+      await ApiService.updateUserProfile({
+        displayName: profileName,
+      })
+      
+      setSettingsSaved(true)
+      
+      // Optionally update local user state if passed from parent
+      // This would require passing a user update function from App.jsx
+    } catch (error) {
+      console.error('Error updating profile:', error)
+      // Could add error state here to show user
+    }
+  }
+
+  const ensureSemesterInDatabase = async (displaySemesterId) => {
+    if (!displaySemesterId) {
+      throw new Error('Semester identifier missing')
+    }
+
+    const [yearPart, ...nameParts] = displaySemesterId.split('-')
+    const year = parseInt(yearPart, 10)
+    const semesterName = nameParts.join('-')
+
+    if (Number.isNaN(year) || !semesterName) {
+      throw new Error(`Invalid semester identifier: ${displaySemesterId}`)
+    }
+
+    const semesterFromState = semesters.find((semester) => semester.id === displaySemesterId)
+    if (semesterFromState?.backendId) {
+      return {
+        backendId: semesterFromState.backendId,
+        year: semesterFromState.year,
+        name: semesterFromState.name
+      }
+    }
+
+    let semesterInDb = null
+
+    const localYearCount = semesters.filter((semester) => semester.year === year).length
+
+    let inferredPosition = Math.max(localYearCount, 0)
+
+    try {
+      const existingSemesters = await ApiService.getSemesters(year)
+      const semesterList = existingSemesters.semesters ?? []
+      const remoteMax = semesterList.reduce((max, entry) => Math.max(max, entry.position ?? 0), -1)
+      inferredPosition = Math.max(remoteMax + 1, localYearCount)
+
+      semesterInDb = semesterList.find(
+        (s) => s.year === year && s.name === semesterName
+      )
+    } catch (err) {
+      console.warn('Semester lookup failed, will create if needed', err)
+    }
+
+    if (!semesterInDb) {
+      const createdSemester = await ApiService.createSemester({
+        name: semesterName,
+        year,
+        position: inferredPosition >= 0 ? inferredPosition : 0,
+      })
+      semesterInDb = createdSemester?.semester ?? createdSemester
+    }
+
+    const backendId =
+      semesterInDb?.id ||
+      semesterInDb?.semester_id ||
+      `${year}-${semesterName.toLowerCase()}`
+
+    const dbPosition = semesterInDb?.position ?? inferredPosition ?? 0
+
+    setSemesters((prev) =>
+      prev.map((semester) =>
+        semester.id === displaySemesterId
+          ? { ...semester, backendId, name: semesterName, year, position: dbPosition }
+          : semester
+      )
+    )
+
+    return { backendId, year, name: semesterName, position: dbPosition }
+  }
+
+  const getCourseKey = (course) => {
+    if (!course) return ''
+    return course.course_code ? `${course.course_code}__${course.course_name}` : course.course_name
+  }
+
+  const buildRateMyProfessorUrl = (professorId) =>
+    professorId ? `https://www.ratemyprofessors.com/professor/${professorId}` : ''
+
+  const handleGenerateSchedule = async (semesterId) => {
+    setActiveGenerationSemesterId(semesterId)
+    setLoadingGenerationSemesterId(semesterId)
+    setSemesterPendingProfessorSelection(null)
+    setGeneratedCourses([])
+    setCurrentCourseForProfessor(null)
+    setAgentRecommendations({})
+
+    try {
+      // Generate exactly 4 classes for the semester
+      const mockCourses = [
+        {
+          school_name: "University of Michigan - Dearborn",
+          department: "Computer Science",
+          course_number: "450",
+          course_name: "Database Systems",
+          semester_code: semesterId.split('-')[1].toLowerCase().substring(0, 1) + semesterId.split('-')[0].substring(2),
+          dept_code: "CIS"
+        },
+        {
+          school_name: "University of Michigan - Dearborn",
+          department: "Computer Science", 
+          course_number: "485",
+          course_name: "Software Engineering",
+          semester_code: semesterId.split('-')[1].toLowerCase().substring(0, 1) + semesterId.split('-')[0].substring(2),
+          dept_code: "CIS"
+        },
+        {
+          school_name: "University of Michigan - Dearborn",
+          department: "Computer Science",
+          course_number: "375",
+          course_name: "Web Development",
+          semester_code: semesterId.split('-')[1].toLowerCase().substring(0, 1) + semesterId.split('-')[0].substring(2),
+          dept_code: "CIS"
+        },
+        {
+          school_name: "University of Michigan - Dearborn",
+          department: "Computer Science",
+          course_number: "430",
+          course_name: "Data Structures",
+          semester_code: semesterId.split('-')[1].toLowerCase().substring(0, 1) + semesterId.split('-')[0].substring(2),
+          dept_code: "CIS"
+        }
+      ]
+      
+      // Call generate-schedule endpoint
+      const result = await ApiService.generateSchedule(mockCourses)
+      
+      if (result.schedule) {
+        // Extract courses from schedule
+        const semesterKey = Object.keys(result.schedule)[0]
+        const courses = (result.schedule[semesterKey] || []).slice(0, 4)
+        const normalizedCourses = courses.map((course) => {
+          if (course.course_code) {
+            return course
+          }
+
+          const fallbackSource = mockCourses.find(
+            (mockCourse) => mockCourse.course_name === course.course_name
+          )
+
+          let courseCode = null
+          if (fallbackSource) {
+            const prefix = fallbackSource.dept_code || ''
+            courseCode = `${prefix ? `${prefix} ` : ''}${fallbackSource.course_number}`.trim()
+          }
+
+          return {
+            ...course,
+            course_code: courseCode,
+          }
+        })
+
+        if (normalizedCourses.length === 0) {
+          setSemesterPendingProfessorSelection(null)
+          alert('No courses were generated for this semester. Please try again.')
+          return
+        }
+
+        setSemesterPendingProfessorSelection(semesterId)
+        
+        // Get AI recommendations for each course
+        const recommendationsMap = {}
+        
+        for (const course of normalizedCourses) {
+          if (course.professors && course.professors.length > 0) {
+            try {
+              const agentResponse = await ApiService.getAgentRecommendations(
+                ['engaging', 'clear', 'helpful'], // Default preferences
+                [{
+                  course: course.course_name,
+                  instructors: course.professors.map(prof => ({
+                    name: prof.name,
+                    score_overall: prof.avgRating || 0,
+                    would_take_again_pct: prof.wouldTakeAgainPercent || 0,
+                    difficulty: prof.avgDifficulty || 3.0,
+                    recent_evals: prof.latestComments || []
+                  }))
+                }]
+              )
+              
+              if (agentResponse.success) {
+                const courseKey = getCourseKey(course)
+                recommendationsMap[courseKey] = {
+                  recommendations: agentResponse.recommendations,
+                  professors: course.professors
+                }
+              }
+            } catch (err) {
+              console.error(`Error getting recommendations for ${course.course_name}:`, err)
+            }
+          }
+        }
+        
+        setAgentRecommendations(recommendationsMap)
+        setGeneratedCourses(normalizedCourses)
+
+        // Start professor selection flow
+        setCurrentCourseForProfessor(normalizedCourses[0])
+        setIsProfessorChoiceDialogOpen(true)
+      } else {
+        setSemesterPendingProfessorSelection(null)
+        alert('No schedule data was returned. Please try again.')
+      }
+    } catch (error) {
+      console.error('Error generating schedule:', error)
+      setSemesterPendingProfessorSelection(null)
+      alert('Failed to generate schedule. Please try again.')
+    } finally {
+      setLoadingGenerationSemesterId(null)
+    }
+  }
+
+  const handleProfessorChoice = async (professor) => {
+    if (!semesterPendingProfessorSelection || !currentCourseForProfessor) return
+
+    const targetSemesterId = semesterPendingProfessorSelection
+    const courseIndex = generatedCourses.findIndex(c => c === currentCourseForProfessor)
+
+    try {
+      const { backendId } = await ensureSemesterInDatabase(targetSemesterId)
+
+      if (!backendId) {
+        throw new Error('Unable to resolve semester identifier for saving class')
+      }
+
+      const rateMyProfessorUrl = buildRateMyProfessorUrl(professor.id)
+
+      const classData = {
+        name: currentCourseForProfessor.course_name,
+        credits: parseInt(currentCourseForProfessor.credits || '3', 10),
+        professor: professor.name,
+        rateMyProfessorUrl,
+        rmpLink: rateMyProfessorUrl,
+      }
+
+      await ApiService.createClass(backendId, classData)
+
+      setSemesters((prev) =>
+        prev.map((semester) =>
+          semester.id === targetSemesterId
+            ? {
+                ...semester,
+                backendId,
+                classes: [
+                  ...semester.classes,
+                  {
+                    id: `${semester.id}-${currentCourseForProfessor.course_name}-${Date.now()}`,
+                    name: currentCourseForProfessor.course_name,
+                    courseCode: currentCourseForProfessor.course_code || '',
+                    credits: currentCourseForProfessor.credits || '3',
+                    professor: professor.name,
+                    rmp: rateMyProfessorUrl,
+                    professorData: professor,
+                  },
+                ].slice(0, 4),
+              }
+            : semester
+        )
+      )
+
+      if (courseIndex < generatedCourses.length - 1) {
+        setCurrentCourseForProfessor(generatedCourses[courseIndex + 1])
+      } else {
+        await loadSemestersFromDatabase()
+
+        setIsProfessorChoiceDialogOpen(false)
+        setGeneratedSemesters(prev => {
+          const updated = new Set(prev)
+          updated.add(targetSemesterId)
+          return updated
+        })
+        setGeneratedCourses([])
+        setCurrentCourseForProfessor(null)
+        setAgentRecommendations({})
+        setSemesterPendingProfessorSelection(null)
+      }
+    } catch (error) {
+      console.error('Error saving class:', error)
+      alert('Failed to save class. Please try again.')
+    }
+  }
+
+  const handleSkipProfessor = async () => {
+    if (!semesterPendingProfessorSelection || !currentCourseForProfessor) return
+
+    // Add class without professor
+    const courseIndex = generatedCourses.findIndex(c => c === currentCourseForProfessor)
+    const targetSemesterId = semesterPendingProfessorSelection
+    
+    try {
+      const { backendId } = await ensureSemesterInDatabase(targetSemesterId)
+
+      if (!backendId) {
+        throw new Error('Unable to resolve semester identifier for saving class')
+      }
+
+      const classData = {
+        name: currentCourseForProfessor.course_name,
+        credits: parseInt(currentCourseForProfessor.credits || '3', 10),
+        professor: 'TBD',
+        rateMyProfessorUrl: '',
+        rmpLink: '',
+      }
+
+      await ApiService.createClass(backendId, classData)
+
+      setSemesters((prev) =>
+        prev.map((semester) =>
+          semester.id === targetSemesterId
+            ? {
+                ...semester,
+                backendId,
+                classes: [
+                  ...semester.classes,
+                  {
+                    id: `${semester.id}-${currentCourseForProfessor.course_name}-${Date.now()}`,
+                    name: currentCourseForProfessor.course_name,
+                    courseCode: currentCourseForProfessor.course_code || '',
+                    credits: currentCourseForProfessor.credits || '3',
+                    professor: 'TBD',
+                    rmp: '',
+                  },
+                ].slice(0, 4),
+              }
+            : semester
+        )
+      )
+      
+      if (courseIndex < generatedCourses.length - 1) {
+        setCurrentCourseForProfessor(generatedCourses[courseIndex + 1])
+      } else {
+        await loadSemestersFromDatabase()
+        
+        setIsProfessorChoiceDialogOpen(false)
+        setGeneratedSemesters(prev => {
+          const updated = new Set(prev)
+          updated.add(targetSemesterId)
+          return updated
+        })
+        setGeneratedCourses([])
+        setCurrentCourseForProfessor(null)
+        setAgentRecommendations({})
+        setSemesterPendingProfessorSelection(null)
+      }
+    } catch (error) {
+      console.error('Error saving class:', error)
+      alert('Failed to save class. Please try again.')
+    }
+  }
+
+  // Load semesters from database
+  const loadSemestersFromDatabase = async () => {
+    try {
+      const response = await ApiService.getSemesters(null, true) // Get all semesters with classes
+      
+      if (response.semesters && response.semesters.length > 0) {
+        // Convert database semesters to local state format
+        const dbSemesters = response.semesters.map(semester => ({
+          id: `${semester.year}-${semester.name}`,
+          backendId: semester.id,
+          name: semester.name,
+          year: semester.year,
+          classes: semester.classes?.map(cls => ({
+            id: cls.id,
+            name: cls.name,
+            courseCode: cls.courseCode || '',
+            credits: cls.credits?.toString() || '3',
+            professor: cls.professor || '',
+            rmp: cls.rateMyProfessorUrl || '',
+          })) || []
+        }))
+        
+        // Merge with generated semesters that don't exist in DB yet
+        setSemesters(prev => {
+          const merged = [...prev]
+          dbSemesters.forEach(dbSem => {
+            const index = merged.findIndex(s => s.id === dbSem.id)
+            if (index >= 0) {
+              merged[index] = {
+                ...merged[index],
+                ...dbSem,
+              }
+            } else {
+              merged.push(dbSem)
+            }
+          })
+          return merged
+        })
+        
+        // Mark semesters that have classes as generated
+        const semestersWithClasses = new Set(
+          dbSemesters
+            .filter(s => s.classes.length > 0)
+            .map(s => s.id)
+        )
+        setGeneratedSemesters(semestersWithClasses)
+      }
+    } catch (error) {
+      console.error('Error loading semesters:', error)
+    }
   }
 
   const handleAddPreviousClass = () => {
@@ -681,12 +1286,75 @@ const HomePage = ({ onLogout, userEmail }) => {
                   </Stack>
 
                   {semester.classes.length === 0 ? (
-                    <Typography
-                      variant="body2"
-                      sx={{ color: 'rgba(226,232,240,0.5)', fontStyle: 'italic' }}
-                    >
-                      No classes planned yet — use the add button to build your schedule.
-                    </Typography>
+                    <Stack spacing={2}>
+                      <Typography
+                        variant="body2"
+                        sx={{ color: 'rgba(226,232,240,0.5)', fontStyle: 'italic' }}
+                      >
+                        No classes planned yet
+                      </Typography>
+                      {generatedSemesters.has(semester.id) ? (
+                        <Button
+                          variant="outlined"
+                          sx={{
+                            borderRadius: 2,
+                            textTransform: 'none',
+                            borderColor: 'primary.main',
+                            color: 'primary.light',
+                            fontWeight: 600,
+                            '&:hover': {
+                              borderColor: 'primary.light',
+                              background: 'rgba(59,130,246,0.1)',
+                            }
+                          }}
+                        >
+                          📝 INSERT/UPDATE GRADES
+                        </Button>
+                      ) : loadingGenerationSemesterId === semester.id ? (
+                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="center">
+                          <CircularProgress size={20} />
+                          <Typography variant="body2" sx={{ color: 'primary.light' }}>
+                            Generating schedule...
+                          </Typography>
+                        </Stack>
+                      ) : activeGenerationSemesterId === semester.id ? (
+                        <Button
+                          variant="contained"
+                          onClick={() => handleGenerateSchedule(semester.id)}
+                          sx={{
+                            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                            borderRadius: 2,
+                            textTransform: 'none',
+                            fontWeight: 600,
+                            '&:hover': {
+                              background: 'linear-gradient(135deg, #2563eb, #7c3aed)',
+                            }
+                          }}
+                        >
+                          🤖 Generate with AI
+                        </Button>
+                      ) : (
+                        <Button
+                          disabled={Boolean(loadingGenerationSemesterId)}
+                          variant="outlined"
+                          onClick={() => setActiveGenerationSemesterId(semester.id)}
+                          sx={{
+                            borderRadius: 2,
+                            textTransform: 'none',
+                            borderColor: 'rgba(148,163,184,0.4)',
+                            color: 'rgba(226,232,240,0.8)',
+                            fontWeight: 600,
+                            '&:hover': {
+                              borderColor: 'primary.light',
+                              color: 'primary.light',
+                              background: 'rgba(59,130,246,0.08)',
+                            }
+                          }}
+                        >
+                          Focus this semester
+                        </Button>
+                      )}
+                    </Stack>
                   ) : (
                     <Stack spacing={1.5}>
                       {semester.classes.map((course, courseIndex) => (
@@ -750,6 +1418,21 @@ const HomePage = ({ onLogout, userEmail }) => {
                                   </Typography>
                                 </Stack>
                               )}
+                              {course.professor && (
+                                <ProfessorDetails 
+                                  professor={{ 
+                                    name: course.professor,
+                                    id: 'unknown',
+                                    avgRating: null,
+                                    avgDifficulty: null,
+                                    wouldTakeAgainPercent: null,
+                                    teacherTags: [],
+                                    latestComments: []
+                                  }} 
+                                  courseName={course.name}
+                                  expandedInitially={false}
+                                />
+                              )}
                             </Stack>
                             <Stack spacing={1} alignItems="flex-end">
                               {course.credits ? (
@@ -764,7 +1447,7 @@ const HomePage = ({ onLogout, userEmail }) => {
                               ) : null}
                               <Button
                                 size="small"
-                                onClick={() => handleRemoveClass(semester.id, courseIndex)}
+                                onClick={() => handleRemoveClass(semester.id, course.id)}
                                 sx={{ textTransform: 'none', borderRadius: 2 }}
                               >
                                 Remove
@@ -773,6 +1456,26 @@ const HomePage = ({ onLogout, userEmail }) => {
                           </Stack>
                         </InteractivePanel>
                       ))}
+                      
+                      {generatedSemesters.has(semester.id) && (
+                        <Button
+                          variant="outlined"
+                          sx={{
+                            mt: 2,
+                            borderRadius: 2,
+                            textTransform: 'none',
+                            borderColor: 'primary.main',
+                            color: 'primary.light',
+                            fontWeight: 600,
+                            '&:hover': {
+                              borderColor: 'primary.light',
+                              background: 'rgba(59,130,246,0.1)',
+                            }
+                          }}
+                        >
+                          📝 INSERT/UPDATE GRADES
+                        </Button>
+                      )}
                     </Stack>
                   )}
                 </InteractivePanel>
@@ -982,10 +1685,11 @@ const HomePage = ({ onLogout, userEmail }) => {
                 <Button
                   variant="contained"
                   component="label"
-                  startIcon={<CloudUploadRoundedIcon />}
+                  startIcon={uploadStatus[item.key]?.loading ? <CircularProgress size={20} color="inherit" /> : <CloudUploadRoundedIcon />}
+                  disabled={uploadStatus[item.key]?.loading}
                   sx={{ borderRadius: 2 }}
                 >
-                  Select file
+                  {uploadStatus[item.key]?.loading ? 'Uploading...' : 'Select file'}
                   <input
                     hidden
                     type="file"
@@ -995,11 +1699,63 @@ const HomePage = ({ onLogout, userEmail }) => {
                     }
                   />
                 </Button>
-                {uploadedFiles[item.key] && (
-                  <Typography variant="body2" sx={{ color: 'rgba(226,232,240,0.8)' }}>
-                    Selected: {uploadedFiles[item.key].name}
-                  </Typography>
+                
+                {uploadStatus[item.key]?.error && (
+                  <Alert severity="error" sx={{ borderRadius: 2 }}>
+                    {uploadStatus[item.key].error}
+                  </Alert>
                 )}
+                
+                {uploadedFiles[item.key] && !uploadStatus[item.key]?.loading && !uploadStatus[item.key]?.error && (
+                  <Alert severity="success" sx={{ borderRadius: 2 }}>
+                    Uploaded: {uploadedFiles[item.key].name}
+                  </Alert>
+                )}
+                
+                {/* Show existing uploads */}
+                {(() => {
+                  const typeMapping = {
+                    pathway: 'pathway-plan',
+                    previous: 'previous-classes',
+                    current: 'current-semester',
+                  }
+                  const uploads = existingUploads[typeMapping[item.key]] || []
+                  
+                  if (uploads.length > 0) {
+                    return (
+                      <Stack spacing={1} sx={{ mt: 1 }}>
+                        <Typography variant="caption" sx={{ color: 'rgba(226,232,240,0.6)' }}>
+                          Previous uploads:
+                        </Typography>
+                        {uploads.slice(0, 3).map((upload) => (
+                          <Stack
+                            key={upload.id}
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                            sx={{
+                              p: 1,
+                              borderRadius: 1,
+                              background: 'rgba(100,116,139,0.1)',
+                            }}
+                          >
+                            <Typography variant="body2" sx={{ flex: 1, fontSize: '0.8rem', color: 'rgba(226,232,240,0.8)' }}>
+                              {upload.originalName}
+                            </Typography>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleDeleteUpload(upload.id, typeMapping[item.key])}
+                              sx={{ color: 'error.light' }}
+                            >
+                              <DeleteRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Stack>
+                        ))}
+                      </Stack>
+                    )
+                  }
+                  return null
+                })()}
               </InteractivePanel>
             </Slide>
           </Grid>
@@ -1805,6 +2561,16 @@ const HomePage = ({ onLogout, userEmail }) => {
               }
               placeholder="https://www.ratemyprofessors.com/..."
             />
+            <Button
+              variant="outlined"
+              onClick={() => {
+                setIsProfessorSelectorOpen(true);
+                setIsAddClassDialogOpen(false);
+              }}
+              sx={{ mt: 2 }}
+            >
+              Find Professor with RMP Integration
+            </Button>
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -1814,6 +2580,18 @@ const HomePage = ({ onLogout, userEmail }) => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ProfessorSelector
+        open={isProfessorSelectorOpen}
+        onClose={() => {
+          setIsProfessorSelectorOpen(false);
+          setIsAddClassDialogOpen(true); // Return to add class dialog
+        }}
+        onAddProfessor={handleAddProfessorToSchedule}
+        semesterId={newClassForm.semesterId}
+        currentCourseName={newClassForm.name}
+        currentProfessor={newClassForm.professor}
+      />
 
       <Dialog
         open={isAddPreviousClassOpen}
@@ -1866,6 +2644,139 @@ const HomePage = ({ onLogout, userEmail }) => {
           <Button onClick={() => setIsAddPreviousClassOpen(false)}>Cancel</Button>
           <Button onClick={handleAddPreviousClass} variant="contained">
             Add class
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Professor Choice Dialog for Generated Schedule */}
+      <Dialog
+        open={isProfessorChoiceDialogOpen}
+        onClose={() => {}}
+        maxWidth="md"
+        fullWidth
+        disableEscapeKeyDown
+      >
+      <DialogTitle>
+        {currentCourseForProfessor && (
+          <Stack spacing={1}>
+            <Typography variant="h6">
+              {`Choose Professor for ${currentCourseForProfessor.course_code ? `${currentCourseForProfessor.course_code} — ${currentCourseForProfessor.course_name}` : currentCourseForProfessor.course_name}`}
+            </Typography>
+            <Typography variant="body2" sx={{ color: 'rgba(226,232,240,0.7)' }}>
+              AI-recommended professors based on your preferences
+            </Typography>
+          </Stack>
+        )}
+      </DialogTitle>
+        <DialogContent dividers>
+          {currentCourseForProfessor && (
+            <Stack spacing={3}>
+              {/* AI Recommendations */}
+              {agentRecommendations[getCourseKey(currentCourseForProfessor)]?.recommendations && (
+                <Card
+                  sx={{
+                    background: 'linear-gradient(135deg, rgba(59,130,246,0.15), rgba(147,51,234,0.15))',
+                    border: '1px solid rgba(59,130,246,0.3)',
+                    borderRadius: 2,
+                  }}
+                >
+                  <CardHeader
+                    title={
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Typography sx={{ fontWeight: 600 }}>
+                          🤖 AI Recommendation
+                        </Typography>
+                      </Stack>
+                    }
+                  />
+                  <CardContent>
+                    <Stack spacing={1.5}>
+                      {agentRecommendations[getCourseKey(currentCourseForProfessor)].recommendations.map((rec, idx) => (
+                        <Box
+                          key={idx}
+                          sx={{
+                            p: 2,
+                            borderRadius: 1.5,
+                            background: 'rgba(30,41,59,0.5)',
+                            border: '1px solid rgba(148,163,184,0.15)',
+                          }}
+                        >
+                          <Typography variant="body2" sx={{ color: 'rgba(226,232,240,0.95)' }}>
+                            {rec}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Professor List */}
+              <Stack spacing={2}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                  Available Professors:
+                </Typography>
+              {currentCourseForProfessor.professors?.map((prof, idx) => (
+                  <Card
+                    key={prof.id || idx}
+                    sx={{
+                      background: 'rgba(30,41,59,0.9)',
+                      border: '1px solid rgba(148,163,184,0.18)',
+                      borderRadius: 2,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      '&:hover': {
+                        borderColor: 'primary.main',
+                        background: 'rgba(59,130,246,0.1)',
+                      }
+                    }}
+                    onClick={() => handleProfessorChoice(prof)}
+                  >
+                    <CardContent>
+                      <Stack spacing={1.5}>
+                        <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                          {prof.name}
+                        </Typography>
+                        <Stack direction="row" spacing={2} flexWrap="wrap">
+                          <Chip
+                            label={`Rating: ${prof.avgRating || 'N/A'}`}
+                            size="small"
+                            variant="outlined"
+                          />
+                          <Chip
+                            label={`Difficulty: ${prof.avgDifficulty || 'N/A'}`}
+                            size="small"
+                            variant="outlined"
+                          />
+                          <Chip
+                            label={`Would Take Again: ${prof.wouldTakeAgainPercent || 'N/A'}%`}
+                            size="small"
+                            variant="outlined"
+                          />
+                        </Stack>
+                        {prof.teacherTags && prof.teacherTags.length > 0 && (
+                          <Stack direction="row" flexWrap="wrap" gap={0.5}>
+                            {prof.teacherTags.slice(0, 5).map((tag, tagIdx) => (
+                              <Chip
+                                key={tagIdx}
+                                label={tag}
+                                size="small"
+                                sx={{ background: 'rgba(59,130,246,0.2)' }}
+                              />
+                            ))}
+                          </Stack>
+                        )}
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                ))}
+              </Stack>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleSkipProfessor}>
+            Skip (Add Later)
           </Button>
         </DialogActions>
       </Dialog>

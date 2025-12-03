@@ -144,3 +144,5 @@ devenv.local.nix
 .pre-commit-config.yaml
 agent_recommender/scripts/env.local.sh
 agent_recommender/scripts/env.local.sh
+
+node_modules/

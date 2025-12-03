@@ -1,22 +1,33 @@
 import { useState } from 'react'
-import { Box, Button, Fade, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, Fade, Stack, TextField, Typography, Alert, CircularProgress } from '@mui/material'
 import InteractivePanel from '../components/InteractivePanel.jsx'
+import ApiService from '../services/api.js'
 
 const LoginPage = ({ onAuthenticate }) => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showError, setShowError] = useState(false)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
 
     if (!email.trim() || !password.trim()) {
-      setShowError(true)
+      setError('Please provide both email and password')
       return
     }
 
-    setShowError(false)
-    onAuthenticate({ email })
+    setError('')
+    setLoading(true)
+
+    try {
+      const authData = await ApiService.login(email, password)
+      onAuthenticate(authData)
+    } catch (err) {
+      setError(err.message || 'Invalid credentials. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -97,6 +108,7 @@ const LoginPage = ({ onAuthenticate }) => {
                 type="submit"
                 variant="contained"
                 size="large"
+                disabled={loading}
                 sx={{
                   py: 1.5,
                   fontWeight: 600,
@@ -105,21 +117,23 @@ const LoginPage = ({ onAuthenticate }) => {
                   boxShadow: '0 16px 40px rgba(59,130,246,0.35)',
                 }}
               >
-                Enter Dashboard
+                {loading ? <CircularProgress size={24} /> : 'Enter Dashboard'}
               </Button>
             </Box>
 
-            <Fade in={showError} mountOnEnter unmountOnExit>
-              <Typography variant="body2" sx={{ color: '#fca5a5' }}>
-                Please provide both an email and password to continue.
-              </Typography>
-            </Fade>
+            {error && (
+              <Fade in>
+                <Alert severity="error" sx={{ borderRadius: 2 }}>
+                  {error}
+                </Alert>
+              </Fade>
+            )}
 
             <Typography
               variant="caption"
               sx={{ color: 'rgba(226,232,240,0.45)', textAlign: 'center' }}
             >
-              Demo mode: credentials are not validated. Any email/password works.
+              Enter your credentials to access the HD4 Scheduler dashboard.
             </Typography>
           </Stack>
         </InteractivePanel>

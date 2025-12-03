@@ -1,11 +1,17 @@
 { pkgs, lib, config, ... }:
 
 {
-  languages.python = {
-    enable = true;
-    package = pkgs.python313;
-    uv = {
+  languages = {
+    javascript = {
       enable = true;
+      npm.enable = true;
+    };
+    python = {
+      enable = true;
+      package = pkgs.python313;
+      uv = {
+        enable = true;
+      };
     };
   };
 
